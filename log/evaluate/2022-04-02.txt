@@ -1,0 +1,11 @@
+EVALUATE    Epoch 20/30, Loss 8083.876, Best Loss 8083.876, Best Epoch 20
+EVALUATE    Epoch 21/30, Loss 8412.072, Best Loss 8412.072, Best Epoch 21
+EVALUATE    Epoch 22/30, Loss 7489.127, Best Loss 7489.127, Best Epoch 22
+EVALUATE    Epoch 23/30, Loss 7935.151, Best Loss 7489.127, Best Epoch 22
+EVALUATE    Epoch 24/30, Loss 7476.274, Best Loss 7476.274, Best Epoch 24
+EVALUATE    Epoch 25/30, Loss 7260.349, Best Loss 7260.349, Best Epoch 25
+EVALUATE    Epoch 26/30, Loss 7214.706, Best Loss 7214.706, Best Epoch 26
+EVALUATE    Epoch 27/30, Loss 7557.647, Best Loss 7214.706, Best Epoch 26
+EVALUATE    Epoch 28/30, Loss 8354.982, Best Loss 7214.706, Best Epoch 26
+EVALUATE    Epoch 29/30, Loss 6792.364, Best Loss 6792.364, Best Epoch 29
+EVALUATE    Epoch 30/30, Loss 7236.475, Best Loss 6792.364, Best Epoch 29
