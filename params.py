@@ -23,6 +23,7 @@ normalized_camera = {
 LEYE_INDICES = [33, 133]
 REYE_INDICES = [362, 263]
 MOUTH_INDICES = [78, 308]
+NOSE_INDICES = [168, 197, 5, 1, 97, 2, 328]
 
 
 """

@@ -13,73 +13,133 @@ from scipy.io import loadmat
 from models_2d import AFFNet as affnet_2d
 from models_3d import AFFNet as affnet_3d
 from models_resnet import GazeResNet as gaze_resnet_model
-from test_image import load_model
-from utils_function import crop_img, get_box, input_preprocess, exp_smooth
+from utils_function import exp_smooth, load_model, yawpitch_to_vector
 
 import mediapipe as mp
-from params import face_model, camera, normalized_camera
-from img_preprocess import detect_landmarks_mediapipe, face_eye_preprocess, denormalize_gaze_vector, gaze2point, GazeEstimator
+from params import face_model, camera, normalized_camera, LEYE_INDICES, REYE_INDICES, MOUTH_INDICES
+from img_preprocess import detect_landmarks_mediapipe, GazeEstimator
 from Kalman import KalmanFilter
+from gaze_estimation_demo import get_resGaze_model as ResGaze
 
 
 cpu = False
-weights = 'weights/2022-05-10am/epoch_30.pth'
+# weights = 'weights/2022-05-19/epoch_40.pth'
+# weights = 'weights/2022-05-10am/epoch_30.pth'
+# weights = 'weights/2022-05-26/epoch_47.pth'
+# weights = 'weights/2022-05-24/epoch_45.pth'
+weights = 'weights/2022-05-30/epoch_49.pth'
 # weights = 'weights/2022-05-11/epoch_29.pth'
 # weights = 'weights/2022-05-11-resnet/epoch_50.pth'
-resolution_show = (1920, 1080)
-calibration = [286, 1080, 508, 1920]    # h_mm, h_pixel, w_mm, w_pixel
+height_pixel = 1440
+height_mm = 333
+width_pixel = 2560
+width_mm = 594
 
 
-def predict_gaze(net, device, frame, landmarks, calibration):
-    try:
-        leftEye, rightEye, face = get_box(landmarks, shift=False)
-        leftEye_img, rightEye_img, face_img, rects = input_preprocess(frame, leftEye, rightEye, face)
-        leftEye_img, rightEye_img, face_img, rects = leftEye_img.to(device), rightEye_img.to(device), face_img.to(
-            device), rects.to(device)
-        leftEye_img = leftEye_img.unsqueeze(0)
-        rightEye_img = rightEye_img.unsqueeze(0)
-        face_img = face_img.unsqueeze(0)
-        rects = rects.unsqueeze(0)
+# def predict_gaze(net, device, frame, landmarks, calibration):
+#     try:
+#         leftEye, rightEye, face = get_box(landmarks, shift=False)
+#         leftEye_img, rightEye_img, face_img, rects = input_preprocess(frame, leftEye, rightEye, face)
+#         leftEye_img, rightEye_img, face_img, rects = leftEye_img.to(device), rightEye_img.to(device), face_img.to(
+#             device), rects.to(device)
+#         leftEye_img = leftEye_img.unsqueeze(0)
+#         rightEye_img = rightEye_img.unsqueeze(0)
+#         face_img = face_img.unsqueeze(0)
+#         rects = rects.unsqueeze(0)
+#
+#         time_start = time.time()
+#         with torch.no_grad():
+#             gaze = net(leftEye_img, rightEye_img, face_img, rects)
+#         print("GAZE inference time:", time.time() - time_start)
+#         gaze = gaze.squeeze()
+#         h_mm, h_pixel, w_mm, w_pixel = calibration
+#         print("gaze", gaze)
+#         gaze_predict = int(torch.round(gaze[0] / w_mm * resolution_show[0])), int(torch.round(gaze[1] / h_mm * resolution_show[1]))
+#         # gaze_predict = np.array(gaze.cpu())
+#         gaze_predict = np.clip(gaze_predict[0], 0, resolution_show[0]), np.clip(gaze_predict[1], 0, resolution_show[1])
+#         cv2.rectangle(frame, (int(face[0]), int(face[1])), (int(face[2]), int(face[3])), color=(0, 255, 0), thickness=2)
+#         cv2.rectangle(frame, (int(leftEye[0]), int(leftEye[1])), (int(leftEye[2]), int(leftEye[3])), color=(0, 255, 0), thickness=2)
+#         cv2.rectangle(frame, (int(rightEye[0]), int(rightEye[1])), (int(rightEye[2]), int(rightEye[3])), color=(0, 255, 0), thickness=2)
+#     except:
+#         gaze_predict = None
+#     finally:
+#         return gaze_predict, frame
 
-        time_start = time.time()
-        with torch.no_grad():
-            gaze = net(leftEye_img, rightEye_img, face_img, rects)
-        print("GAZE inference time:", time.time() - time_start)
-        gaze = gaze.squeeze()
-        h_mm, h_pixel, w_mm, w_pixel = calibration
-        print("gaze", gaze)
-        gaze_predict = int(torch.round(gaze[0] / w_mm * resolution_show[0])), int(torch.round(gaze[1] / h_mm * resolution_show[1]))
-        # gaze_predict = np.array(gaze.cpu())
-        gaze_predict = np.clip(gaze_predict[0], 0, resolution_show[0]), np.clip(gaze_predict[1], 0, resolution_show[1])
-        cv2.rectangle(frame, (int(face[0]), int(face[1])), (int(face[2]), int(face[3])), color=(0, 255, 0), thickness=2)
-        cv2.rectangle(frame, (int(leftEye[0]), int(leftEye[1])), (int(leftEye[2]), int(leftEye[3])), color=(0, 255, 0), thickness=2)
-        cv2.rectangle(frame, (int(rightEye[0]), int(rightEye[1])), (int(rightEye[2]), int(rightEye[3])), color=(0, 255, 0), thickness=2)
-    except:
-        gaze_predict = None
-    finally:
-        return gaze_predict, frame
 
-
-def draw_gaze(predict, frame, gt=None):
+def draw_gaze(predict, frame):
     resize = 0.5
-    background = np.full((resolution_show[1], resolution_show[0], 3), fill_value=255, dtype=np.uint8)
+    background = np.full((height_pixel, width_pixel, 3), fill_value=45, dtype=np.uint8)
     img = cv2.resize(frame, None, fx=resize, fy=resize, interpolation=cv2.INTER_NEAREST)
     h, w, _ = img.shape
-    # start_x, start_y = int((resolution_show[0] - w) / 2), int((resolution_show[1] - h) / 2)
-    start_x, start_y = resolution_show[0] - w, 0
+    start_x, start_y = width_pixel - w, 0
     background[start_y:start_y + h, start_x:start_x + w] = img
     img = background
-    cv2.line(img, (960, 0), (960, 100), color=(255, 222, 222), thickness=3)
-    if gt is not None:
-        gt = [resolution_show[0] - gt[0], gt[1]]  # Horizontally flip the gt, make the mirrored image seem more comfortable
-        cv2.circle(img, center=gt, radius=20, color=(0, 0, 255), thickness=2)
-        cv2.putText(img, f"Ground Truth: ({gt[0]}, {gt[1]})", (20, 20), cv2.FONT_ITALIC, 0.6, (0, 0, 0), 2)
-    # predict = [resolution_show[0] - predict[0], predict[1]]   # Horizontally Flip
+    cv2.line(img, (int(width_pixel / 2), 0), (int(width_pixel / 2), 100), color=(45, 22, 22), thickness=3)
+
     if predict is not None:
-        colors = [(255, 0, 114), (114, 0, 255)]
+        colors = [(255, 255, 114), (114, 255, 255)]
         for i, pre in enumerate(predict):
-            cv2.circle(img, center=pre, radius=10, color=colors[i], thickness=2)
+            # cv2.circle(img, center=pre, radius=10, color=colors[i], thickness=2)
+            # draw_fading_square(img, pre)
+            draw_square(img, pre, square_size=(640, 480))
             cv2.putText(img, f"Predict:      ({pre[0]}, {pre[1]})", (20, 50), cv2.FONT_ITALIC, 0.6, (0, 0, 0), 2)
+    return img
+
+
+def draw_gaze_arrow(face_center_xy, image_in, yawpitch, thickness=2, color=(255, 255, 0), sclae=2.0):
+    """Draw gaze angle on given image with a given eye positions."""
+    yawpitch = yawpitch.cpu().detach().numpy().squeeze()
+
+    image_out = image_in
+    (h, w) = image_in.shape[:2]
+    length = w/2
+    pos = face_center_xy
+    if len(image_out.shape) == 2 or image_out.shape[2] == 1:
+        image_out = cv2.cvtColor(image_out, cv2.COLOR_GRAY2BGR)
+    dx = -length * np.sin(yawpitch[1]) * np.cos(yawpitch[0])
+    dy = -length * np.sin(yawpitch[0])
+    cv2.arrowedLine(image_out, tuple(np.round(pos).astype(np.int32)),
+                   tuple(np.round([pos[0] + dx, pos[1] + dy]).astype(int)), color,
+                   thickness, cv2.LINE_AA, tipLength=0.18)
+    return image_out
+
+
+def draw_square(img, pre, square_size=(40, 40)):
+    square_color = (222, 200, 200)
+    line_color = (85, 65, 65)
+    h, w, _ = img.shape
+    x_max, y_max = w // square_size[0], h // square_size[1]
+    x, y = pre[0] // square_size[0], pre[1] // square_size[1]
+    for i in range(x_max):
+        for j in range(y_max):
+            cv2.rectangle(img,  (i * square_size[0], j * square_size[1]),
+                          ((i + 1) * square_size[0], (j + 1) * square_size[1]),
+                          line_color, 2)
+    cv2.rectangle(img, (x * square_size[0], y * square_size[1]),
+                  ((x + 1) * square_size[0], (y + 1) * square_size[1]),
+                  square_color, -1)
+    return img
+
+
+def draw_fading_square(img, pre):
+    square_size = 40
+    h, w, _ = img.shape
+    center_i, center_j = pre[0] // 40, pre[1] // 40
+    offset = [-2, -1, 0, 1, 2]
+    offset_x, offset_y = np.meshgrid(offset, offset)
+    for x, y in zip(offset_x.flatten(), offset_y.flatten()):
+        if np.abs(x) == 2 or np.abs(y) == 2:
+            color = (200, 200, 255)
+        elif np.abs(x) == 1 or np.abs(y) == 1:
+            color = (120, 120, 255)
+        else:
+            color = (0, 0, 255)
+        x += center_i
+        y += center_j
+        cv2.rectangle(img, (x * square_size, y * square_size), ((x + 1) * square_size, (y + 1) * square_size),
+                      color, -1)
+        cv2.rectangle(img, (x * square_size, y * square_size), ((x + 1) * square_size, (y + 1) * square_size),
+                      (255, 255, 255), 3)
     return img
 
 
@@ -109,6 +169,8 @@ def main():
     gaze_model = affnet_3d(res=False)
     # gaze_model = gaze_resnet_model()
     load_model(gaze_model, weights, cpu)
+    # gaze_model = ResGaze()
+
     gaze_model = gaze_model.to(device)
     gaze_model.eval()
 
@@ -118,7 +180,11 @@ def main():
     log_y = []
     xy_list = []
 
-    P = loadmat("./CaptureData/lxc/projection.mat")['K']
+    Px = loadmat("./CaptureData/test/projection.mat")['Px']
+    Py = loadmat("./CaptureData/test/projection.mat")['Py']
+
+    from params import LEYE_INDICES, REYE_INDICES, MOUTH_INDICES, NOSE_INDICES
+    indices = np.hstack([LEYE_INDICES, REYE_INDICES, NOSE_INDICES])
 
     if capture.isOpened():
         while True:
@@ -130,17 +196,32 @@ def main():
             for landmark in landmarks:
                 normalized_lEye_img, normalized_rEye_img, normalized_face_img, normalized_headvector \
                     = gaze_predictor.get_predict_input(landmark, frame)
-                print("normalized_headvector", normalized_headvector)
                 gaze_predict = gaze_model(normalized_lEye_img, normalized_rEye_img, normalized_face_img, normalized_headvector)
-                print("gaze_predict 1", gaze_predict)
-                gaze_predict = gaze_predictor.denormalize_gaze_vector(gaze_predict)
-                print("gaze_predict 3", gaze_predict)
-
+                gaze_predict_yawpitch = gaze_predict
+                print("angles", gaze_predict)
+                # gaze_predict = yawpitch_to_vector(gaze_predict)
+                print("vector", gaze_predict)
+                gaze_predict = gaze_predictor.denormalize_gaze_vector(gaze_predict.cpu().detach().numpy())
+                print("denorm vector", gaze_predict)
                 gaze_predict_point = gaze_predictor.gaze2point(gaze_predict)
-                print("before 3", gaze_predict_point)
-                # gaze_predict_point = gaze_predict_point - np.array([0, 5])
-                print("after 3", gaze_predict_point)
-                gaze_predict_point = mm2px(gaze_predict_point)
+
+
+
+                # gaze_predict_point = np.array([gaze_predict_point[0], gaze_predict_point[1], 1])
+                # camera_matrix = camera["camera_matrix"]
+                # print('111', gaze_predict_point)
+                # gaze_predict_point = np.dot(camera_matrix, gaze_predict_point)
+                # print('222', gaze_predict_point)
+                # gaze_predict_point = gaze_predict_point[:2]
+
+                gaze_predict_point = gaze_predict_point[0], gaze_predict_point[1]
+                gaze_predict_point = mm2px(gaze_predict_point, height_pixel=height_pixel, height_mm=height_mm,
+                                           width_pixel=width_pixel, width_mm=width_mm)
+
+                face_center = np.mean(landmark[np.concatenate((LEYE_INDICES, REYE_INDICES, MOUTH_INDICES))])
+
+
+            h, w = 1440, 2560
 
             if gaze_predict_point is not None:
                 # gaze_before, gaze_predict = smooth_gaze(gaze_before, gaze_predict, alpha=0.3)
@@ -149,21 +230,29 @@ def main():
                 xy_list.append([x, y])
                 xy_list = xy_list[-10:]
                 x, y = np.mean(xy_list, 0).astype(np.int)
-                gaze_predict = x, y
+                x_orig = copy.deepcopy(x)
 
-                x1, y1 = kf.predict()
-                x2, y2 = kf.update(gaze_predict)
-                x2 = np.array(x2).squeeze().astype(np.int32)
-                gaze_predict_Kalman = x2[0], x2[1]
-                log_x.append(gaze_predict[0])
-                log_y.append(gaze_predict[1])
+                x, y = x / w, y / h
+                ax = [x ** 3, x ** 2, x, 1]
+                ay = [y ** 3, y ** 2, y, 1]
+                gaze_predict_x = np.dot(np.array(ax), Px.T).squeeze() * w
+                gaze_predict_y = np.dot(np.array(ay), Py.T).squeeze() * h
+                gaze_predict = gaze_predict_x.astype(np.int32), gaze_predict_y.astype(np.int32)
 
-            x, y = x2[0], x2[1]
-            A = np.array([1, x, y, x**2, y**2, x * y, x**3, y**3, x**2 * y, x * y**2])
-            gaze_predict_Kalman = np.dot(A, P).astype(np.int32).squeeze()
+                # x1, y1 = kf.predict()
+                # x2, y2 = kf.update(gaze_predict)
+                # x2 = np.array(x2).squeeze().astype(np.int32)
+                # gaze_predict_Kalman = x2[0], x2[1]
+                # log_x.append(gaze_predict[0])
+                # log_y.append(gaze_predict[1])
 
-            print(gaze_predict_Kalman)
-            out = draw_gaze([gaze_predict_Kalman], frame)
+            print("P", Px)
+            # gaze_predict = np.dot(np.array(gaze_predict).reshape(1, -1), P).squeeze()
+
+            # gaze_predict = np.multiply(gaze_predict, [w, h]).astype(np.int32)
+            # gaze_predict = [x_orig, gaze_predict[1]]
+
+            out = draw_gaze([gaze_predict], frame)
             out_win = "test"
             cv2.namedWindow(out_win, cv2.WINDOW_NORMAL)
             cv2.setWindowProperty(out_win, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
@@ -173,7 +262,7 @@ def main():
         capture.release()
         cv2.destroyAllWindows()
         print(f"max: ({max(log_x)}, {max(log_y)}), min: ({min(log_x)}, {min(log_y)}), mean: ({np.mean(log_x)}, {np.mean(log_y)})")
-        dist = np.full((resolution_show[1], resolution_show[0], 3), fill_value=255, dtype=np.uint8)
+        dist = np.full((height_pixel, width_pixel, 3), fill_value=255, dtype=np.uint8)
         for i in range(len(log_x)):
             cv2.circle(dist, center=(log_x[i], log_y[i]), radius=10, color=(0, 0, 255), thickness=-1)
         save_dist_img = 'distribution/' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '.png'

@@ -1,1 +1,1 @@
-  dimensions:    1920x1080 pixels (508x286 millimeters)
+  dimensions:    2560x1440 pixels (594x333 millimeters)

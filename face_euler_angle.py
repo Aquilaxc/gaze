@@ -144,5 +144,5 @@ def pic_face_rotvec(data_root):
 
 if __name__ == "__main__":
     test_camera()
-    txt = "/media/cv1254/DATA/EyeTracking/data/MPIIFaceGaze/test/"
+    # txt = "/media/cv1254/DATA/EyeTracking/data/MPIIFaceGaze/test/"
     # pic_face_rotvec(txt)

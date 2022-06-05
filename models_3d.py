@@ -230,17 +230,8 @@ class AFFNet(nn.Module):
             nn.Linear(5 * 5 * 64, 128),
             nn.LeakyReLU(inplace=True),
         )
-        # Gaze Regression
-        self.fc = nn.Sequential(
-            nn.Linear(128 + 64 + 64, 128),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(128, 64),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(64, 3),
-        )
-
+        # Head Rotation vector
         self.vector_fc = nn.Sequential(
-            # head rotation vector
             nn.Linear(3, 64),
             nn.LeakyReLU(inplace=True),
             nn.Linear(64, 96),
@@ -250,6 +241,15 @@ class AFFNet(nn.Module):
             nn.Linear(128, 64),
             nn.LeakyReLU(inplace=True),
         )
+        # Gaze Regression
+        self.fc = nn.Sequential(
+            nn.Linear(128 + 64 + 64, 128),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(128, 64),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(64, 3),
+        )
+
 
     def forward(self, left_eyes, right_eyes, faces, vector):
         face = self.faceModel(faces)

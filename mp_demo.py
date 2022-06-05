@@ -34,17 +34,18 @@ with mp_face_mesh.FaceMesh(
             print(face.landmark[130])
             # print(face.center)
             for index, landmark in enumerate(face.landmark):
-                if index in [130, 243,
-                             463, 359,
-                             61,
-                             291, ]:
+                # if index in [130, 243,
+                #              463, 359,
+                #              61,
+                #              291, ]:
+                if index >= 468:
                     x = landmark.x
                     y = landmark.y
 
                     shape = image.shape
                     x_pixel = int(x * shape[1])
                     y_pixel = int(y * shape[0])
-                    cv2.circle(image, (x_pixel, y_pixel), 1, (255, 0, 100), -1)
+                    cv2.circle(image, (x_pixel, y_pixel), 1, (0, 0, 255), -1)
 
     # Flip the image horizontally for a selfie-view display.
     cv2.imshow('MediaPipe Face Mesh', cv2.flip(image, 1))

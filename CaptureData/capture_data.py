@@ -36,8 +36,8 @@ class TargetCircle(QWidget):
         self.time_count()   # Start to countdown
 
     def generate_circle_pivot(self):    # Generate the circles by grids
-        grids = 2, 2
-        circle_per_grid = 2
+        grids = 8, 4
+        circle_per_grid = 15
         total = grids[0] * grids[1] * circle_per_grid
         assert self.res[0] % grids[0] == 0
         assert self.res[1] % grids[1] == 0

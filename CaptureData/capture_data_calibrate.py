@@ -16,10 +16,12 @@ import argparse
 from torch.backends import cudnn
 
 from img_preprocess import detect_landmarks_mediapipe, GazeEstimator
+from utils_function import load_model
 from params import face_model, camera, normalized_camera
 from test_camera import mm2px
+from test_img import read_label
 from models_3d import AFFNet as affnet_3d
-from test_image import load_model
+
 
 DarkGreyBlue = QColor(45, 45, 50)
 
@@ -45,9 +47,19 @@ class TargetCircle(QWidget):
         self.time_count()   # Start to countdown
 
     def generate_circle_pivot(self):    # Generate the circles by grids
-        pivots = [[80, 70], [960, 70], [1840, 70],
-                  [80, 540], [960, 540], [1840, 540],
-                  [80, 1010], [960, 1010], [1840, 1010]] * 5
+        # pivots = [[80, 70], [960, 70], [1840, 70],
+        #           [80, 540], [960, 540], [1840, 540],
+        #           [80, 1010], [960, 1010], [1840, 1010]] * 2
+        pivots = []
+        x = list(range(0, 2560, 40))
+        y = list(range(16, 1424, 22))
+        print(len(x), len(y))
+        assert len(x) == len(y)
+        for i in zip(x, y):
+            pivots.append(list(i))
+        for j in zip(x[::-1], y):
+            pivots.append(list(j))
+
         total = len(pivots)
         return pivots, total
 
@@ -202,7 +214,7 @@ def main(args):
     window.showFullScreen()
     window.show()
     app.exec_()
-    compute_calibrate_matrix("/media/cv1254/DATA/EyeTracking/code/GazeEstimate2d/CaptureData/lxc/lxc.txt")
+    compute_calibrate_matrix(r"D:\code\gaze\CaptureData\test\test.txt")
     sys.exit()
 
 
@@ -225,19 +237,10 @@ def save_screen_info(path, save_path, participant):
 
 
 def compute_calibrate_matrix(txt):
-    images = []
-    participant = txt.rsplit('/', 1)[-1][:-4]
-    root = txt.rsplit('/', 1)[0]
-    gt_vector = []
-    with open(txt) as f:
-        lines = f.readlines()
-    for line in lines:
-        line = line.strip().split()
-        images.append(os.path.join(root, line[0]))
-        gt_vector.append(line[1:])
-    gt_vector = np.array(gt_vector).astype(np.int32)
+    participant = txt.rsplit(os.sep, 1)[-1][:-4]
+
     cpu = False
-    weights = '/media/cv1254/DATA/EyeTracking/code/GazeEstimate2d/weights/2022-05-10am/epoch_30.pth'
+    weights = '../weights/2022-05-30/epoch_49.pth'
     device = torch.device("cuda:0")
     gaze_predictions = []
     cudnn.benchmark = True
@@ -246,6 +249,9 @@ def compute_calibrate_matrix(txt):
     load_model(gaze_model, weights, cpu)
     gaze_model = gaze_model.to(device)
     gaze_model.eval()
+
+    images, gt_vector, screen = read_label(txt)
+    height_pixel, height_mm, width_pixel, width_mm = screen
 
     for img in images:
         img = cv2.imread(img)
@@ -256,18 +262,48 @@ def compute_calibrate_matrix(txt):
             normalized_lEye_img, normalized_rEye_img, normalized_face_img, normalized_headvector \
                 = gaze_predictor.get_predict_input(landmark, img)
             gaze_predict = gaze_model(normalized_lEye_img, normalized_rEye_img, normalized_face_img, normalized_headvector)
-            gaze_predict = gaze_predictor.denormalize_gaze_vector(gaze_predict)
+            gaze_predict = gaze_predictor.denormalize_gaze_vector(gaze_predict.cpu().detach().numpy())
             gaze_predict_point = gaze_predictor.gaze2point(gaze_predict)
-            gaze_predict_point = mm2px(gaze_predict_point)
+            gaze_predict_point = mm2px(gaze_predict_point, height_pixel=height_pixel, height_mm=height_mm,
+                                       width_pixel=width_pixel, width_mm=width_mm)
             gaze_predictions.append(gaze_predict_point)
+
     A = []
+    Ax, Ay = [], []
+
+    h, w = 1440, 2560
+
+
     for xy in gaze_predictions:
-        x, y = xy[0], xy[1]
-        a = [1, x, y, x**2, y**2, x * y, x**3, y**3, x**2 * y, x * y**2]
-        A.append(a)
-    K = np.dot(np.linalg.inv(np.dot(np.transpose(A), A)), np.dot(np.transpose(A), gt_vector))
-    print(K)
-    projection_vector = {"K": K}
+        x, y = xy[0] / w, xy[1] / h
+        # a = [x**3, y**3, x**2, y**2, x, y, 1]
+
+        ax = [x ** 3, x ** 2, x, 1]
+        ay = [y ** 3, y ** 2, y, 1]
+
+        Ax.append(ax)
+        Ay.append(ay)
+    Ax = np.vstack(Ax).astype(np.float64)
+    Ay = np.vstack(Ay).astype(np.float64)
+
+    gt_vector[:, 0] = gt_vector[:, 0] / w
+    gt_vector[:, 1] = gt_vector[:, 1] / h
+
+    gaze_predictions = np.vstack(gaze_predictions)
+    gt_vector_x = gt_vector[:, 0]
+    gt_vector_y = gt_vector[:, 1]
+    x_pre = gaze_predictions[:, 0].squeeze()
+    y_pre = gaze_predictions[:, 1].squeeze()
+
+    x = {"gt": gt_vector_x * w, "pred": x_pre.astype(np.int32)}
+    savemat("../x_pred.mat", x)
+
+    Px = np.dot(np.linalg.inv(np.dot(np.transpose(Ax), Ax)), np.dot(np.transpose(Ax), gt_vector_x))
+    Py = np.dot(np.linalg.inv(np.dot(np.transpose(Ay), Ay)), np.dot(np.transpose(Ay), gt_vector_y))
+    # _, P2 = cv2.solve(Ax, gt_vector, flags=cv2.DECOMP_NORMAL)
+    # print("P2:", Py)
+    projection_vector = {"Px": Px, "Py": Py}
+    print(Px, Px.shape)
     savemat(os.path.join(participant, "projection.mat"), projection_vector)
 
 
@@ -280,5 +316,5 @@ if __name__ == "__main__":
     #     args.name = input("请输入姓名拼音或缩写:")
     # main(args)
 
-    compute_calibrate_matrix("/media/cv1254/DATA/EyeTracking/code/GazeEstimate2d/CaptureData/lxc/lxc.txt")
-    
+    compute_calibrate_matrix(r"D:\code\gaze\CaptureData\test\test.txt")
+    #

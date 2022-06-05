@@ -129,3 +129,98 @@ def exp_smooth(before, now, alpha=0.9):
     else:
         after = alpha * now + (1 - alpha) * before
     return after
+
+
+
+def vector_to_yawpitch(vectors):
+    r"""Convert given gaze vectors to yaw (:math:`\theta`) and pitch (:math:`\phi`) angles.
+    Args:
+        vectors (:obj:`numpy.array`): gaze vectors in 3D :math:`(n\times 3)`.
+    Returns:
+        :obj:`numpy.array` of shape :math:`(n\times 2)` with values in radians.
+    """
+    vectors = vectors[np.newaxis, :] if vectors.shape == (3, ) else vectors
+    n = vectors.shape[0]
+    out = np.empty((n, 2))
+    vectors = np.divide(vectors, np.linalg.norm(vectors, axis=1).reshape(n, 1))
+    out[:, 0] = np.arcsin(vectors[:, 1])  # theta
+    out[:, 1] = np.arctan2(vectors[:, 0], vectors[:, 2])  # phi
+    return out.squeeze()    # yaw, pitch
+
+
+def yawpitch_to_vector(yawpitch):
+    r"""Convert given yaw (:math:`\theta`) and pitch (:math:`\phi`) angles to unit gaze vectors.
+    Args:
+        yawpitch (:obj:`numpy.array`): yaw and pitch angles :math:`(n\times 2)` in radians.
+    Returns:
+        :obj:`numpy.array` of shape :math:`(n\times 3)` with 3D vectors per row.
+    """
+    yawpitch = yawpitch.unsqueeze(0) if yawpitch.size() == (2, ) else yawpitch
+    n = yawpitch.size()[0]
+    sin = torch.sin(yawpitch)
+    cos = torch.cos(yawpitch)
+    out = torch.empty((n, 3), device=yawpitch.device)
+    out[:, 0] = torch.multiply(cos[:, 0], sin[:, 1])
+    out[:, 1] = sin[:, 0]
+    out[:, 2] = torch.multiply(cos[:, 0], cos[:, 1])
+    # out = out * np.pi / 180
+    return out
+
+
+def angular_error_np(gt, predict, reduction='sum'):
+    assert gt.shape[0] == predict.shape[0]
+    gt = yawpitch_to_vector(gt) if gt.shape[1] == 2 else gt
+    predict = yawpitch_to_vector(predict) if predict.shape[1] == 2 else predict
+    losses = 0
+    for g, p in zip(gt, predict):
+        cosine_sim = np.dot(g, p) / (np.linalg.norm(g) * np.linalg.norm(p))
+        loss = 1 - cosine_sim
+        losses += loss
+    if reduction == 'sum':
+        return torch.tensor(losses, requires_grad=True)
+    if reduction == 'mean':
+        return torch.tensor(losses / gt.shape[0], requires_grad=True)
+
+
+def angular_error(gt, predict, reduction='sum'):
+    assert gt.size()[0] == predict.size()[0]
+    gt = yawpitch_to_vector(gt) if gt.size()[1] == 2 else gt
+    predict = yawpitch_to_vector(predict) if predict.size()[1] == 2 else predict
+    losses = 0
+    for g, p in zip(gt, predict):
+        cosine_sim = torch.matmul(g, p) / (torch.norm(g) * torch.norm(p))
+        loss = 1 - cosine_sim
+        losses += loss
+    if reduction == 'sum':
+        return losses
+    if reduction == 'mean':
+        return losses / gt.size()[0]
+
+
+def check_keys(model, pretrained_state_dict):
+    ckpt_keys = set(pretrained_state_dict.keys())
+    model_keys = set(model.state_dict().keys())
+    used_pretrained_keys = model_keys & ckpt_keys
+    unused_pretrained_keys = ckpt_keys - model_keys
+    missing_keys = model_keys - ckpt_keys
+    print('Missing keys:{}'.format(len(missing_keys)))
+    print('Unused checkpoint keys:{}'.format(len(unused_pretrained_keys)))
+    print('Used keys:{}'.format(len(used_pretrained_keys)))
+    assert len(used_pretrained_keys) > 0, 'load NONE from pretrained checkpoint'
+    return True
+
+
+def load_model(model, pretrained_path, load_to_cpu):
+    print('Loading pretrained model from {}'.format(pretrained_path))
+    if load_to_cpu:
+        pretrained_dict = torch.load(pretrained_path, map_location=lambda storage, loc: storage)
+    else:
+        device = torch.cuda.current_device()
+        pretrained_dict = torch.load(pretrained_path, map_location=lambda storage, loc: storage.cuda(device))
+    # if "state_dict" in pretrained_dict.keys():
+    #     pretrained_dict = remove_prefix(pretrained_dict['state_dict'], 'module.')
+    # else:
+    #     pretrained_dict = remove_prefix(pretrained_dict, 'module.')
+    check_keys(model, pretrained_dict)
+    model.load_state_dict(pretrained_dict, strict=True)
+    return model

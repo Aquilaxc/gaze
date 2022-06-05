@@ -2,7 +2,7 @@ import os
 import shutil
 
 import cv2
-from scipy.io import loadmat
+from scipy.io import loadmat, savemat
 
 
 def edit_label():
@@ -275,6 +275,163 @@ def split_data(path):
                     shutil.copy(calib_file, dest_file)
 
 
+def get_landmarks(img):
+    from img_preprocess import detect_landmarks_mediapipe
+    pts = detect_landmarks_mediapipe(img)
+    pt_ret = []
+    eye_nose = [33, 133, 362, 263, 168, 197, 5, 1, 97, 2, 328]
+    for pt in pts:
+        pt_ret = pt
+    return pt_ret
+
+
+def get_rotvector(pts, camera):
+    import numpy as np
+    from params import face_model as face_model3d
+    rvec = np.zeros(3, dtype=np.float64)
+    tvec = np.array([0, 0, 1], dtype=np.float64)
+    eye_nose = [33, 133, 362, 263, 168, 197, 5, 1, 97, 2, 328]
+    _, rvec, tvec = cv2.solvePnP(face_model3d,
+                                 pts,
+                                 camera["cameraMatrix"],
+                                 camera["distCoeffs"],
+                                 rvec,
+                                 tvec,
+                                 useExtrinsicGuess=True,
+                                 flags=cv2.SOLVEPNP_ITERATIVE)
+    rvec = [str(i) for i in rvec.squeeze()]
+    tvec = [str(j) for j in tvec.squeeze()]
+    vec = rvec + tvec
+    return vec
+
+
+def label_add_landmarks_and_rotvector(path):
+    from scipy.io import loadmat
+    import numpy as np
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            if file.endswith('.txt') and file != 'readme.txt':
+                mat = os.path.join(root, "Calibration", "Camera.mat")
+                camera = loadmat(mat)
+                new_lines = []
+                with open(os.path.join(root, file), 'r') as f:
+                    lines = f.readlines()
+                for line in lines:
+                    img = line.strip().split()[0]
+                    img = os.path.join(root, img)
+                    print(img)
+                    img = cv2.imread(img)
+                    landmarks = get_landmarks(img)
+                    if landmarks == []:
+                        continue
+                    vec = get_rotvector(landmarks, camera)
+                    landmarks = np.round(landmarks).astype(np.int32).ravel()
+                    new_line = ""
+                    # for l in landmarks:
+                    #     new_line += " "
+                    #     new_line += str(l)
+                    for v in vec:
+                        new_line += " "
+                        new_line += str(v)
+                    new_line += '\n'
+                    new_line = line.strip() + new_line
+                    new_lines.append(new_line)
+                with open(os.path.join(root, file), 'w') as f:
+                    f.writelines(new_lines)
+
+
+def show_image(path):
+    import numpy as np
+    root = path.rsplit('\\', 1)[0]
+    with open(path, 'r') as f:
+        lines = f.readlines()
+    for line in lines:
+        line = line.strip().split()
+        img = os.path.join(root, line[0])
+        ori_ldmks = line[3:15]
+        mp_ldmks = line[28:40]
+        img = cv2.imread(img)
+        for pt in np.array(ori_ldmks).astype(np.int32).reshape((-1, 2)):
+            cv2.circle(img, (pt[0], pt[1]), 2, (0, 255, 0), -1)
+        for pt in np.array(mp_ldmks).astype(np.int32).reshape((-1, 2)):
+            cv2.circle(img, (pt[0], pt[1]), 2, (0, 0, 255), -1)
+
+        cv2.imshow('1', img)
+        cv2.waitKey(0)
+
+
+def show_mat():
+    mat = r"CaptureData\lxc2\Calibration\Camera.mat"
+    mat = loadmat(mat)
+    print(mat)
+
+
+def save_cameraMat():
+    from params import camera
+    mat = {
+        'cameraMatrix': camera["camera_matrix"],
+        'distCoeffs': camera["dist_coefficients"]
+    }
+    savemat(r"CaptureData\lxc2\Calibration\Camera.mat", mat)
+
+
+def check_transformation_from_scs_to_ccs():
+    import numpy as np
+    txt = r"D:\code\gaze\data\train\p00\p00.txt"
+    monitor = os.path.join(txt.rsplit('\\', 1)[0], "Calibration", "monitorPose.mat")
+    monitor = loadmat(monitor)
+    rvec = monitor["rvects"]
+    tvec = monitor["tvecs"]
+    Camera = loadmat(os.path.join(txt.rsplit('\\', 1)[0], "Calibration", "Camera.mat"))
+    camera_matrix = Camera["cameraMatrix"]
+    rot_mat, _ = cv2.Rodrigues(rvec)
+    screenSize = loadmat(os.path.join(txt.rsplit('\\', 1)[0], "Calibration", "screenSize.mat"))
+    height_mm = screenSize["height_mm"]
+    height_pixel = screenSize["height_pixel"]
+    width_pixel = screenSize["width_pixel"]
+    width_mm = screenSize["width_mm"]
+    print(height_pixel, height_mm, width_pixel, width_mm)
+    with open(txt, 'r') as f:
+        lines = f.readlines()
+    for line in lines:
+        line = line.strip().split()
+        scs = np.array(line[1:3] + ["0"]).astype(np.float64).reshape(-1, 1)
+        ccs = np.array(line[24:27]).astype(np.float64).reshape(-1, 1)
+        ccs_flip = np.multiply(ccs, np.array([-1, 1, 1]).reshape((3, 1)))
+        print(ccs, ccs_flip)
+        computed = (np.dot(rot_mat, ccs) + tvec).squeeze()
+        computed_flip = (np.dot(rot_mat, ccs_flip) + tvec).squeeze()
+        x = computed[0] / width_mm * width_pixel
+        y = computed[1] / height_mm * height_pixel
+        x_flip = computed_flip[0] / width_mm * width_pixel
+        y_flip = computed_flip[1] / height_mm * height_pixel
+        computed = np.array([x.squeeze(), y.squeeze(), computed[-1]])
+        computed_flip = np.array([x_flip.squeeze(), y_flip.squeeze(), computed_flip[-1]])
+        scs = scs.squeeze().astype(np.int32)
+        err = scs - computed
+        print("scs", scs)
+        print("compute", computed)
+        print("computed flip", computed_flip)
+        print("add", computed_flip[0] + computed[0])
+        print("error", err)
+
+
+def check_distribution_of_calibration(txt):
+    import numpy as np
+    with open(txt, 'r') as f:
+        lines = f.readlines()
+    background = np.full((1440, 2560, 3), fill_value=255, dtype=np.uint8)
+    for line in lines:
+        line = line.strip().split()
+        dot = np.array(line[1:3]).astype(np.int32)
+        cv2.circle(background, center=dot, radius=5, color=(0, 0, 255), thickness=-1)
+
+    resize = 0.5
+    img = cv2.resize(background, None, fx=resize, fy=resize, interpolation=cv2.INTER_NEAREST)
+    cv2.imshow('distribution', img)
+    cv2.waitKey(0)
+
+
 if __name__ == "__main__":
     # png2jpg()
     # edit_label()
@@ -283,7 +440,22 @@ if __name__ == "__main__":
     # edit_mat()
     # check_mat()
     # normalize_one_face()
-    mediapipeface()
+    # mediapipeface()
     # split_data("/media/cv1254/DATA/EyeTracking/data/MPIIFaceGaze")
     # remove_redundant()
     # check_exp_smoothing()
+
+    # label = r"D:\code\gaze\data"
+    # label_add_landmarks_and_rotvector(label)
+    # save_cameraMat()
+    # show_mat()
+    # label = r"D:\code\gaze\data\MPIIFaceGaze\p00\p00.txt"
+    # show_image(label)
+
+    # img = "D:\code\gaze\data\MPIIFaceGaze\p07\day33/0369.jpg"
+    # img = cv2.imread(img)
+    # l = get_landmarks(img)
+    # print(l)
+    # check_transformation_from_scs_to_ccs()
+    check_distribution_of_calibration(r"D:\code\gaze\CaptureData\test\test.txt")
+
